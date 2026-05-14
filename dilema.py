@@ -65,6 +65,7 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"] div:nth-child(2) button { border: 2px solid #ef4444 !important; color: #ef4444 !important; background: rgba(239,68,68,0.1) !important; }
     
     .timer-display { font-size: 3.5rem; font-weight: 900; color: #eab308; text-align: center; font-family: monospace; }
+    .temptation-text { font-size: 0.9rem; color: #9ca3af; font-style: italic; text-align: center; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,7 +78,6 @@ if 'user_id' not in st.session_state:
 
 # --- MATCHMAKING LOGIC ---
 def find_match(stake):
-    # 1. Jaribu kujiunga na chumba kilichopo tayari
     res = supabase.table("rooms").select("*").eq("stake", stake).eq("status", "waiting").execute()
     rooms = res.data
     
@@ -90,8 +90,7 @@ def find_match(stake):
             }).eq("room_id", room['room_id']).execute()
             return room['room_id'], "P2"
     
-    # 2. Kama hakuna, tengeneza room mpya (Tumeshughulikia 'room_id' hapa)
-    r_id = random.randint(100000, 999999) # Hii inazuia not-null constraint error
+    r_id = random.randint(100000, 999999)
     try:
         new_room = supabase.table("rooms").insert({
             "room_id": r_id,
@@ -112,14 +111,12 @@ st.markdown('<p style="text-align:center; color:#6b7280; font-weight:bold; lette
 _, col_main, _ = st.columns([1, 2, 1])
 
 with col_main:
-    # --- STAGE 1: LOBBY & REWARDS ---
     if st.session_state.room_id is None:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.markdown("<h3 style='text-align:center; font-weight:900;'>CHAGUA DAU LAKO</h3>", unsafe_allow_html=True)
         
         dau = st.selectbox("KIASI (TSh):", [2000, 5000, 10000, 50000], label_visibility="collapsed")
         
-        # Reward Calculations
         coop_win = int(dau * 1.5)
         betray_win = int(dau * 1.8)
         
@@ -145,10 +142,8 @@ with col_main:
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- STAGE 2: WAITING / MATCHMAKING ---
     else:
         try:
-            # Pata data ya chumba kwa wakati halisi
             room_res = supabase.table("rooms").select("*").eq("room_id", st.session_state.room_id).single().execute()
             room = room_res.data
             
@@ -159,31 +154,26 @@ with col_main:
             if room['status'] == 'waiting':
                 elapsed = time.time() - st.session_state.search_start
                 remaining = int(30 - elapsed)
-                
                 if remaining <= 0:
-                    # Muda umeisha: Futa chumba na rudisha lobby
                     supabase.table("rooms").delete().eq("room_id", st.session_state.room_id).execute()
                     st.session_state.room_id = None
-                    st.error("OPPONENT WAS NOT FOUND! Jaribu tena baadaye.")
-                    time.sleep(3)
-                    st.rerun()
+                    st.error("OPPONENT WAS NOT FOUND!")
+                    time.sleep(3); st.rerun()
                 else:
                     st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
                     st.markdown(f'<div class="timer-display">{remaining}</div>', unsafe_allow_html=True)
                     st.warning(f"Inatafuta mpinzani mwenye dau la {room['stake']:,}...")
                     st.progress(elapsed / 30)
-                    
                     if st.button("SITISHA UTAFUTAJI"):
                         supabase.table("rooms").delete().eq("room_id", st.session_state.room_id).execute()
                         st.session_state.room_id = None
                         st.rerun()
-                    
-                    time.sleep(1)
-                    st.rerun()
+                    time.sleep(1); st.rerun()
 
-            # --- STAGE 3: GAMEPLAY ---
             elif room['status'] == 'playing':
                 lvl = room['current_level']
+                betray_win = int(room['stake'] * 1.8)
+                coop_win = int(room['stake'] * 1.5)
                 st.markdown(f"<div style='font-weight:900; color:#eab308;'>LEVEL {lvl}/10</div>", unsafe_allow_html=True)
                 st.progress(lvl / 10)
                 
@@ -194,37 +184,54 @@ with col_main:
 
                 if not my_choice:
                     st.markdown("<h3 style='text-align:center; font-weight:900;'>UAMUZI WAKO?</h3>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='temptation-text'>Pssst! Ukibetray sasa hivi unasepa na TSh {betray_win:,} peke yako... Unasubiri nini? 😉</div>", unsafe_allow_html=True)
                     c1, c2 = st.columns(2)
                     if c1.button("🤝 COOPERATE"):
-                        f = "p1_choice" if role == "P1" else "p2_choice"
-                        supabase.table("rooms").update({f: "cooperate"}).eq("room_id", room['room_id']).execute()
+                        supabase.table("rooms").update({"p1_choice" if role == "P1" else "p2_choice": "cooperate"}).eq("room_id", room['room_id']).execute()
                         st.rerun()
                     if c2.button("🗡️ BETRAY"):
-                        f = "p1_choice" if role == "P1" else "p2_choice"
-                        supabase.table("rooms").update({f: "betray"}).eq("room_id", room['room_id']).execute()
+                        supabase.table("rooms").update({"p1_choice" if role == "P1" else "p2_choice": "betray"}).eq("room_id", room['room_id']).execute()
                         st.rerun()
                 else:
                     if not opp_choice:
                         st.info("Uamuzi wako umetumwa. Mpinzani bado anafikiri...")
-                        time.sleep(2)
-                        st.rerun()
+                        time.sleep(2); st.rerun()
                     else:
-                        # Hapa ndipo logic ya ku-compare inakaa
                         c1, c2 = room['p1_choice'], room['p2_choice']
+                        
+                        # --- GAME LOGIC CASES ---
                         if c1 == "cooperate" and c2 == "cooperate":
-                            st.success("WOTE MMESHIRIKIANA! Songa Level Inayofuata.")
-                            if role == "P1":
-                                time.sleep(2)
-                                if lvl < 10:
+                            if lvl < 10:
+                                st.success("WOTE MMESHIRIKIANA! Songa Level Inayofuata.")
+                                if role == "P1":
+                                    time.sleep(2)
                                     supabase.table("rooms").update({"current_level": lvl+1, "p1_choice": None, "p2_choice": None}).eq("room_id", room['room_id']).execute()
-                                else:
-                                    supabase.table("rooms").update({"status": "finished"}).eq("room_id", room['room_id']).execute()
-                            st.rerun()
-                        # Hapa unaweza kuongeza masharti ya ushindi/kupoteza zaidi...
+                                st.rerun()
+                            else:
+                                st.balloons()
+                                st.markdown("<h2 style='color:#22c55e; text-align:center;'>LEGENDS! 🏆</h2>", unsafe_allow_html=True)
+                                st.success(f"HONGERA! Mmeshirikiana kwa uaminifu hadi mwisho. Kila mmoja anapata TSh {coop_win:,}!")
+                                supabase.table("rooms").update({"status": "finished"}).eq("room_id", room['room_id']).execute()
+
+                        elif c1 == "betray" and c2 == "betray":
+                            st.markdown("<h2 style='color:#f97316; text-align:center;'>WOTE MMETOLEWA! 💀</h2>", unsafe_allow_html=True)
+                            st.error("Tamaa mbele, mauti nyuma! Wote mmesalitiana, hivyo hakuna aliyepata kitu.")
+                            supabase.table("rooms").update({"status": "finished"}).eq("room_id", room['room_id']).execute()
+
+                        elif (role == "P1" and c1 == "betray") or (role == "P2" and c2 == "betray"):
+                            st.balloons()
+                            st.markdown("<h2 style='color:#22c55e; text-align:center;'>MSHINDI! 🧠</h2>", unsafe_allow_html=True)
+                            st.success(f"Umeshinda! Umemsaliti mwenzio na kujinyakulia TSh {betray_win:,}. Akili kichwani!")
+                            supabase.table("rooms").update({"status": "finished"}).eq("room_id", room['room_id']).execute()
+                        
+                        else:
+                            st.markdown("<h2 style='color:#ef4444; text-align:center;'>ELIMINATED! 🕯️</h2>", unsafe_allow_html=True)
+                            st.error("Umekuwa maminifu kupita kiasi! Mpinzani amekusaliti na kuchukua kila kitu.")
+                            supabase.table("rooms").update({"status": "finished"}).eq("room_id", room['room_id']).execute()
+
                 st.markdown('</div>', unsafe_allow_html=True)
 
             elif room['status'] == 'finished':
-                st.balloons()
                 st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
                 st.header("GAME OVER")
                 if st.button("RUDI NYUMBANI"):
@@ -232,7 +239,7 @@ with col_main:
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
-        except Exception as e:
+        except Exception:
             st.session_state.room_id = None
             st.rerun()
 
